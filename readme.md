@@ -1,61 +1,80 @@
-# CSPack
-A single-header library defining the CSP file format: a packed, memory-mappable container of blobs.
+# CSData
+A single-header library defining the data formats of CSEngine resources: how textures, fonts, sounds and music are
+authored, parsed, validated and laid out for packing.
 
-## Format
-```
-[ 32-byte header ][ 16-byte-aligned content region ][ directory: count x entry ]
-```
-- `header` holds the magic, version, blob `count`, the FNV-1a `signature`, and the content `size`.
-- The content region holds the blobs, each padded to a 16-byte boundary.
-- The directory holds one `entry` per blob — its `offset`, `size`, and CRC32C `fingerprint` — appended in blob order, so
-  it stays sorted by offset.
+## Formats
+### Textures and Fonts (Aseprite)
+Resources are authored directly as `.aseprite` files (32-bit RGBA) following the engine's conventions:
+- Every top-level layer must be one of the groups `image`, `hitbox` or `pivot`; the `image` group holds the visible
+  artwork, and every file needs at least one tag.
+- Tags become animations, carrying per-frame durations from the file.
+- Each layer of the flat `hitbox` group becomes a named collision shape per frame: its opaque pixels are decomposed into
+  an optimal set of rectangles.
+- The flat `pivot` group holds exactly one layer with exactly one opaque pixel per frame, the frame's anchor point.
+  Textures require a pivot; fonts must not have one (nor hitboxes).
+- For fonts, slices define the glyphs: the slice name is the character (one UTF-8 code point), the slice is the exact
+  glyph box, and the uniform slice height is the line height.
+
+Parsing composites the cels into a single horizontal sprite sheet plus animation, hitbox and glyph metadata.
+
+### Sounds and Music (Opus/WAV renders of Reaper projects)
+Audio is authored in Reaper and rendered to `.opus` or `.wav`, and the rendered file is the single source of truth: the
+`.rpp` project rides inside the audio as metadata — an `RPP_SOURCE` comment tag in Opus files, an `rpp ` chunk in WAV
+files — where every decoder ignores it. CSData provides the machinery to extract the embedded project, embed an updated
+one (rewriting Ogg page checksums and sequence numbers as needed), or strip it for shipping.
+
+### Packed Layout and Accessors
+Parsed resources are serialized into binary blobs read back by CSEngine's runtime loaders:
+- `frames`: per animation frame, UV bounds, duration, pivot and a span into the hitbox blob (all little-endian f64/u64
+  records).
+- `hitboxes`: labelled rectangles; labels are string-table references in debug builds and FNV-1a hashes in release.
+- `glyphs`: per glyph, code point, UV bounds and pixel size.
+- `strings`: the hitbox label pool (debug builds only).
+
+Alongside the blobs, CSData generates the C++ accessor header and source that declare every resource (`cse::image`,
+`cse::font`, `cse::sound`, `cse::music`, plus per-texture animation and hitbox structs) and bind them to regions of the
+pack files they were placed in.
 
 ## Features
-- Single header, depending only on the C++20 standard library and the OS mapping API.
-- One definition of the CSP file format, shared by the writer and the mapper so they cannot drift.
-- Memory-mapping; reading pages in on demand stays zero-copy, so mapping is cheap regardless of file size.
-- Lazy, per-blob CRC32C verification: only the blobs you touch are checked, and only their pages are faulted in, so a
-  multi-gigabyte pack mounts instantly. Verification is computed with a slicing-by-8 software CRC and a
-  three-way-parallel hardware CRC (SSE 4.2) where available.
-- Multiple packs can be mounted at once, each registered by name. Verification dispatches to the owning pack by pointer,
-  so consumers never track which pack a blob came from.
-- An FNV-1a signature ties a file to the build that expects it.
+- Single header, depending only on the C++20 standard library (a public-domain zlib decoder from stb_image is vendored
+  internally for Aseprite cel decompression).
+- One definition of every resource format, shared by the build system and mirrored by the engine's runtime readers so
+  they cannot drift.
+- Strict validation with precise errors: malformed files, convention violations and duplicate names fail the build
+  instead of misbehaving at runtime.
+- Container-agnostic packing: CSData computes layouts and generates code against offsets the caller reports back, so it
+  does not depend on any particular pack file format.
 
 ## Requirements
 - Windows or Linux OS.
 - A C++20 compiler.
 
 ## Usage
-### Writer (Build-Time)
-Append blobs in order, then serialise. `table` records the `(offset, size)` each blob landed at, and `signature()` ties
-the file to this build; the build emits both so the consumer can resolve its regions and validate the file. `write()`
-computes each blob's CRC32C and emits the directory automatically.
+### Loading (Build-Time)
+`load()` parses one resource file into its packable form, validating it against the conventions above. `space` selects
+the resource kind (`"image"`, `"font"`, `"sound"` or `"music"`) and `pack` names the pack it will be placed in; the
+extension predicates `packable_texture()`/`packable_audio()` identify which globbed files are resources at all.
 ```cpp
-csp::pack pack;
-pack.append(first_bytes);
-pack.append(second_bytes);
-csp::write(pack, "Data.csp");
+csd::resource item{csd::load(file, name, space, pack)};
 ```
 
-### Mapper (Run-Time)
-`mount()` maps a file from `directory`, validates its header against the build-time signature and the directory layout,
-and registers it by name in an internal table. It does **not** read the content so mounting is cheap regardless of size.
-Several packs may be mounted at once; `mount()` returns the mapping so the caller can resolve its own spans against
-`base()`. Mappings are read-only and stay valid until `unmount()` or exit.
+### Packing and Code Generation (Build-Time)
+`layouts()` computes each pack's binary blobs in sorted pack order. The caller appends every resource's `blob` and then
+the layout blobs into its container, recording where each landed in a `csd::binding`, and `accessor_header()` /
+`accessor_source()` generate the code that binds the accessors to those regions (`header_preamble()` /
+`source_preamble()` supply the file prologues).
 ```cpp
-// At startup, before anything reads the file.
-csp::mapping &pack{csp::mount(directory, "Data.csp", 6125984697962060194ull)};
+std::vector<csd::layout> layouts{csd::layouts(resources, debug)};
+// Append blobs to the pack containers, filling one csd::binding per pack...
+std::string header{csd::accessor_header(resources, space)};
+std::string source{csd::accessor_source(resources, space, layouts, bindings, debug)};
 ```
-Resolve a blob's bytes against `pack.base()`, then call `csp::verify()` the first time you actually read them. The free
-`verify()` locates the pack whose mapped region contains the pointer, checks that blob's CRC32C once (caching the
-result), faults in only that blob's pages, and returns the pointer; it throws if the blob is corrupt. After the first
-call it is a cheap, lock-free flag check, so it is safe to call on every access and from multiple threads.
+
+### Reaper Project Round-Trip
+`audio_extract_rpp()` returns the embedded project if the audio carries one; `audio_replace_rpp()` returns the audio
+rewritten with the given project embedded, or with any embedded project stripped when given `std::nullopt`.
 ```cpp
-const std::span<const unsigned char> first{pack.base() + 32, 2036};
-csp::verify(first.data(), first.size());
-// Now use first's bytes.
+std::optional<std::vector<std::byte>> project{csd::audio_extract_rpp(bytes, file)};
+std::vector<std::byte> embedded{csd::audio_replace_rpp(bytes, source, file)};
+std::vector<std::byte> stripped{csd::audio_replace_rpp(bytes, std::nullopt, file)};
 ```
-Pointers that fall outside every mapping pass through `verify()` unchanged; use `base()` directly only for bytes you do
-not need verified. A mounted pack can also be retrieved by name with `csp::mounted("Data.csp")` and released with
-`csp::unmount("Data.csp")` (e.g. when unloading a level). Each `mapping` additionally exposes its own `verify()` taking
-either a pointer or an `(offset, size)` pair, for when you already hold the handle.
