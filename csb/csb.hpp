@@ -31066,7 +31066,10 @@ namespace csb
                  {},
                  [](const std::filesystem::path &file) -> std::string { return file.stem().string(); },
                  [&spaces, &packs_of](const std::filesystem::path &file) -> data
-                 { return data{{}, csd::load(file, file.stem().string(), spaces.at(file), packs_of.at(file))}; },
+                 {
+                   return data{std::vector<std::byte>{},
+                               csd::load(file, file.stem().string(), spaces.at(file), packs_of.at(file))};
+                 },
                  {}},
                 {[&](const std::vector<std::tuple<std::filesystem::path, std::string, data>> &files) -> std::string
                  {
