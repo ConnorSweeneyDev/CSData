@@ -1,0 +1,15 @@
+# Development Output
+.cache/
+.vscode/
+.vs/
+.claude/
+.opencode/
+
+# Build Output
+build/
+.clangd
+.clang-tidy
+.clang-format
+
+# User Files
+.env
