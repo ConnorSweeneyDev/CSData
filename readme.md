@@ -1,6 +1,6 @@
 # CSData
-A single-header library defining the data formats of CSEngine resources: how textures, fonts, sounds and music are
-authored, parsed, validated and laid out for packing.
+A single-header library defining the data formats of [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine) resources:
+how textures, fonts, sounds and music are authored, parsed, validated and laid out for packing.
 
 ## Formats
 ### Textures and Fonts (Aseprite)
