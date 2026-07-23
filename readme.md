@@ -24,11 +24,13 @@ files — where every decoder ignores it. CSData provides the machinery to extra
 one (rewriting Ogg page checksums and sequence numbers as needed), or strip it for shipping.
 
 ### Packed Layout and Accessors
-Parsed resources are serialized into binary blobs read back by CSEngine's runtime loaders:
-- `frames`: per animation frame, UV bounds, duration, pivot and a span into the hitbox blob (all little-endian f64/u64
-  records).
-- `hitboxes`: labelled rectangles; labels are string-table references in debug builds and FNV-1a hashes in release.
-- `glyphs`: per glyph, code point, UV bounds and pixel size.
+Parsed resources are serialized into binary blobs read back by CSEngine's runtime loaders. Each blob is a sequence of
+one of the shared record structs — every field is 8 bytes wide so the shapes are padding-free (pinned by static
+assertions), and readers reinterpret the mapped bytes as arrays of them directly:
+- `frames`: `frame_record` — UV bounds, duration, pivot and a span into the hitbox blob.
+- `hitboxes`: `hitbox_record` — labelled rectangles; labels are string-table references in debug and (FNV-1a) hashes in
+  release.
+- `glyphs`: `glyph_record` — code point, UV bounds and pixel size.
 - `strings`: the hitbox label pool (debug builds only).
 
 Alongside the blobs, CSData generates the C++ accessor header and source that declare every resource (`cse::image`,
@@ -38,8 +40,8 @@ pack files they were placed in.
 ## Features
 - Single header, depending only on the C++20 standard library (a public-domain zlib decoder from stb_image is vendored
   internally for Aseprite cel decompression).
-- One definition of every resource format, shared by the build system and mirrored by the engine's runtime readers so
-  they cannot drift.
+- One definition of every resource format, shared by the build system and the engine's runtime readers: the packed
+  record shapes and the label hash are single definitions consumed by both sides, so they cannot drift.
 - Strict validation with precise errors: malformed files, convention violations and duplicate names fail the build
   instead of misbehaving at runtime.
 - Container-agnostic packing: CSData computes layouts and generates code against offsets the caller reports back, so it
@@ -70,11 +72,21 @@ std::string header{csd::accessor_header(resources, space)};
 std::string source{csd::accessor_source(resources, space, layouts, bindings, debug)};
 ```
 
-### Reaper Project Round-Trip
+### Reaper Project Round-Trip (Build-Time)
 `audio_extract_rpp()` returns the embedded project if the audio carries one; `audio_replace_rpp()` returns the audio
 rewritten with the given project embedded, or with any embedded project stripped when given `std::nullopt`.
 ```cpp
 std::optional<std::vector<std::byte>> project{csd::audio_extract_rpp(bytes, file)};
 std::vector<std::byte> embedded{csd::audio_replace_rpp(bytes, source, file)};
 std::vector<std::byte> stripped{csd::audio_replace_rpp(bytes, std::nullopt, file)};
+```
+
+### Reading (Run-Time)
+Runtime loaders resolve a blob's bytes and reinterpret them as records; name types that look hitboxes up by label should
+hash through `hash_identifier` — it is constexpr, so compile-time name hashing works and release lookups can never drift
+from the packed data.
+```cpp
+const auto *frames{reinterpret_cast<const csd::frame_record *>(base + frames_offset)};
+const std::size_t frame_total{frames_size / sizeof(csd::frame_record)};
+constexpr std::uint64_t identifier{csd::hash_identifier("player.hurt")};
 ```

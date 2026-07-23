@@ -26019,8 +26019,6 @@ namespace csp
 
 // CSD 1.0.0
 
-#pragma once
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -26674,6 +26672,60 @@ namespace csd
     std::uint64_t offset{};
     std::uint64_t size{};
   };
+
+  /**
+   * The packed record shapes are written into the layout blobs and read back by CSEngine's runtime resource loaders.
+   * Every field is 8 bytes wide so the structs carry no padding, and records are stored in the machine's native byte
+   * order. Hitbox records store their label as a strings-blob reference in debug builds and as an FNV-1a hash of the
+   * label in release builds; `hitbox_record` names the shape of the active build configuration, while the layout writer
+   * spells out both shapes since it can emit either.
+   */
+  struct frame_record
+  {
+    double left, top, right, bottom;
+    double duration;
+    double pivot_x, pivot_y;
+    std::uint64_t hitbox_index;
+    std::uint64_t hitbox_count;
+  };
+  static_assert(sizeof(frame_record) == 72);
+  struct debug_hitbox_record
+  {
+    std::uint64_t label_offset;
+    std::uint64_t label_size;
+    double left, top, right, bottom;
+  };
+  static_assert(sizeof(debug_hitbox_record) == 48);
+  struct release_hitbox_record
+  {
+    std::uint64_t identifier;
+    double left, top, right, bottom;
+  };
+  static_assert(sizeof(release_hitbox_record) == 40);
+#if defined(_DEBUG)
+  using hitbox_record = debug_hitbox_record;
+#else
+  using hitbox_record = release_hitbox_record;
+#endif
+  struct glyph_record
+  {
+    std::uint64_t character;
+    double left, top, right, bottom;
+    double width, height;
+  };
+  static_assert(sizeof(glyph_record) == 56);
+
+  /**
+   * Hashes an identifier the way release hitbox records store their labels (FNV-1a). Runtime name types should hash
+   * through this function so label lookups can never drift from the packed data.
+   */
+  constexpr std::uint64_t hash_identifier(const std::string_view text)
+  {
+    std::uint64_t hash{14695981039346656037ull};
+    for (const char character : text) hash = (hash ^ static_cast<std::uint64_t>(character)) * 1099511628211ull;
+    return hash;
+  }
+
   struct layout
   {
     std::string pack{};
@@ -27872,31 +27924,17 @@ namespace csd
   /**
    * Computes the binary frame/hitbox/glyph/string layout of every pack, one layout per pack in sorted pack order.
    *
-   * The layout blobs are appended to each pack's csp container after the resource blobs; the returned clips and glyph
-   * spans index into them and are consumed by accessor_source. In debug, hitbox labels are stored in the strings blob
-   * and referenced by offset; in release they are stored as FNV-1a hashes.
+   * The blobs are sequences of the record structs above, appended to each pack's csp container after the resource
+   * blobs; the returned clips and glyph spans index into them and are consumed by accessor_source. In debug, hitbox
+   * labels are stored in the strings blob and referenced by offset; in release they are stored as FNV-1a hashes.
    */
   inline std::vector<layout> layouts(const std::vector<const resource *> &resources, const bool debug)
   {
-    const auto put_u64{[](std::vector<std::byte> &out, std::uint64_t value)
-                       {
-                         std::vector<std::byte> raw{sizeof(value)};
-                         std::memcpy(raw.data(), &value, sizeof(value));
-                         out.insert(out.end(), raw.data(), raw.data() + sizeof(value));
-                       }};
-    const auto put_f64{[](std::vector<std::byte> &out, double value)
-                       {
-                         std::vector<std::byte> raw{sizeof(value)};
-                         std::memcpy(raw.data(), &value, sizeof(value));
-                         out.insert(out.end(), raw.data(), raw.data() + sizeof(value));
-                       }};
-    const auto hash_identifier{[](const std::string &text)
-                               {
-                                 std::uint64_t hash{14695981039346656037ull};
-                                 for (const char character : text)
-                                   hash = (hash ^ static_cast<std::uint64_t>(character)) * 1099511628211ull;
-                                 return hash;
-                               }};
+    const auto put{[](std::vector<std::byte> &out, const auto &record)
+                   {
+                     const auto *raw{reinterpret_cast<const std::byte *>(&record)};
+                     out.insert(out.end(), raw, raw + sizeof(record));
+                   }};
 
     std::vector<std::string> packs{};
     for (const auto *item : resources)
@@ -27959,38 +27997,25 @@ namespace csd
                 for (const auto &bounds : rectangles)
                 {
                   if (debug)
-                  {
-                    put_u64(current.hitboxes, label_offset);
-                    put_u64(current.hitboxes, label_size);
-                  }
+                    put(current.hitboxes, debug_hitbox_record{label_offset, label_size, bounds.at(0), bounds.at(1),
+                                                              bounds.at(2), bounds.at(3)});
                   else
-                    put_u64(current.hitboxes, label_hash);
-                  put_f64(current.hitboxes, bounds.at(0));
-                  put_f64(current.hitboxes, bounds.at(1));
-                  put_f64(current.hitboxes, bounds.at(2));
-                  put_f64(current.hitboxes, bounds.at(3));
+                    put(current.hitboxes,
+                        release_hitbox_record{label_hash, bounds.at(0), bounds.at(1), bounds.at(2), bounds.at(3)});
                   ++hitboxes_total;
                   ++hitbox_count;
                 }
               }
 
-            put_f64(current.frames, left);
-            put_f64(current.frames, top);
-            put_f64(current.frames, right);
-            put_f64(current.frames, bottom);
-            put_f64(current.frames, animation.times.at(index));
+            double pivot_x{(static_cast<double>(item->frame_width) - 1.0) / 2.0};
+            double pivot_y{(static_cast<double>(item->frame_height) - 1.0) / 2.0};
             if (index < animation.pivots.size())
             {
-              put_f64(current.frames, animation.pivots.at(index).at(0));
-              put_f64(current.frames, animation.pivots.at(index).at(1));
+              pivot_x = animation.pivots.at(index).at(0);
+              pivot_y = animation.pivots.at(index).at(1);
             }
-            else
-            {
-              put_f64(current.frames, (static_cast<double>(item->frame_width) - 1.0) / 2.0);
-              put_f64(current.frames, (static_cast<double>(item->frame_height) - 1.0) / 2.0);
-            }
-            put_u64(current.frames, hitbox_count > 0 ? hitbox_index : 0);
-            put_u64(current.frames, hitbox_count);
+            put(current.frames, frame_record{left, top, right, bottom, animation.times.at(index), pivot_x, pivot_y,
+                                             hitbox_count > 0 ? hitbox_index : 0, hitbox_count});
             ++frames_total;
             ++index;
           }
@@ -28003,13 +28028,11 @@ namespace csd
           const auto canvas_height{static_cast<double>(item->frame_height)};
           for (const auto &entry : item->glyphs)
           {
-            put_u64(current.glyphs, entry.character);
-            put_f64(current.glyphs, static_cast<double>(entry.x) / canvas_width);
-            put_f64(current.glyphs, 1.0 - (static_cast<double>(entry.y) / canvas_height));
-            put_f64(current.glyphs, static_cast<double>(entry.x + entry.width) / canvas_width);
-            put_f64(current.glyphs, 1.0 - (static_cast<double>(entry.y + entry.height) / canvas_height));
-            put_f64(current.glyphs, static_cast<double>(entry.width));
-            put_f64(current.glyphs, static_cast<double>(entry.height));
+            put(current.glyphs, glyph_record{entry.character, static_cast<double>(entry.x) / canvas_width,
+                                             1.0 - (static_cast<double>(entry.y) / canvas_height),
+                                             static_cast<double>(entry.x + entry.width) / canvas_width,
+                                             1.0 - (static_cast<double>(entry.y + entry.height) / canvas_height),
+                                             static_cast<double>(entry.width), static_cast<double>(entry.height)});
             ++glyphs_total;
           }
         }
