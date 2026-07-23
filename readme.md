@@ -27,9 +27,9 @@ one (rewriting Ogg page checksums and sequence numbers as needed), or strip it f
 Parsed resources are serialized into binary blobs read back by CSEngine's runtime loaders. Each blob is a sequence of
 one of the shared record structs — every field is 8 bytes wide so the shapes are padding-free (pinned by static
 assertions), and readers reinterpret the mapped bytes as arrays of them directly:
-- `frames`: `frame_record` — UV bounds, duration, pivot and a span into the hitbox blob.
 - `hitboxes`: `hitbox_record` — labelled rectangles; labels are string-table references in debug and (FNV-1a) hashes in
   release.
+- `frames`: `frame_record` — UV bounds, duration, pivot and a span into the hitbox blob.
 - `glyphs`: `glyph_record` — code point, UV bounds and pixel size.
 - `strings`: the hitbox label pool (debug builds only).
 

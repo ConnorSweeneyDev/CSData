@@ -663,15 +663,6 @@ namespace csd
    * label in release builds; `hitbox_record` names the shape of the active build configuration, while the layout writer
    * spells out both shapes since it can emit either.
    */
-  struct frame_record
-  {
-    double left, top, right, bottom;
-    double duration;
-    double pivot_x, pivot_y;
-    std::uint64_t hitbox_index;
-    std::uint64_t hitbox_count;
-  };
-  static_assert(sizeof(frame_record) == 72);
   struct debug_hitbox_record
   {
     std::uint64_t label_offset;
@@ -690,6 +681,15 @@ namespace csd
 #else
   using hitbox_record = release_hitbox_record;
 #endif
+  struct frame_record
+  {
+    double left, top, right, bottom;
+    double duration;
+    double pivot_x, pivot_y;
+    std::uint64_t hitbox_index;
+    std::uint64_t hitbox_count;
+  };
+  static_assert(sizeof(frame_record) == 72);
   struct glyph_record
   {
     std::uint64_t character;
@@ -712,8 +712,8 @@ namespace csd
   struct layout
   {
     std::string pack{};
-    std::vector<std::byte> frames{};
     std::vector<std::byte> hitboxes{};
+    std::vector<std::byte> frames{};
     std::vector<std::byte> glyphs{};
     std::vector<std::byte> strings{};
     std::unordered_map<std::filesystem::path, std::vector<std::pair<std::uint64_t, std::uint64_t>>> clips{};
@@ -724,8 +724,8 @@ namespace csd
     std::string pack{};
     std::uint64_t signature{};
     std::unordered_map<std::filesystem::path, placement> placements{};
-    placement frames{};
     placement hitboxes{};
+    placement frames{};
     placement glyphs{};
     std::uint64_t strings{};
   };
@@ -1905,7 +1905,7 @@ namespace csd
   }
 
   /**
-   * Computes the binary frame/hitbox/glyph/string layout of every pack, one layout per pack in sorted pack order.
+   * Computes the binary hitbox/frame/glyph/string layout of every pack, one layout per pack in sorted pack order.
    *
    * The blobs are sequences of the record structs above, appended to each pack's csp container after the resource
    * blobs; the returned clips and glyph spans index into them and are consumed by accessor_source. In debug, hitbox
@@ -1931,8 +1931,8 @@ namespace csd
       layout current{};
       current.pack = current_pack;
       std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> string_pool{};
-      std::uint64_t frames_total{};
       std::uint64_t hitboxes_total{};
+      std::uint64_t frames_total{};
       std::uint64_t glyphs_total{};
       for (const auto *item : resources)
       {
@@ -2112,12 +2112,12 @@ namespace csd
       if (debug)
         loaders +=
           std::format("  const loader {}{{\"{}.csp\", {}ull, {}, {}, {}, {}, {}, {}, {}}};\n", identifier, entry.pack,
-                      entry.signature, entry.frames.offset, entry.frames.size, entry.hitboxes.offset,
-                      entry.hitboxes.size, entry.glyphs.offset, entry.glyphs.size, entry.strings);
+                      entry.signature, entry.hitboxes.offset, entry.hitboxes.size, entry.frames.offset,
+                      entry.frames.size, entry.glyphs.offset, entry.glyphs.size, entry.strings);
       else
         loaders += std::format("  const loader {}{{\"{}.csp\", {}ull, {}, {}, {}, {}, {}, {}}};\n", identifier,
-                               entry.pack, entry.signature, entry.frames.offset, entry.frames.size,
-                               entry.hitboxes.offset, entry.hitboxes.size, entry.glyphs.offset, entry.glyphs.size);
+                               entry.pack, entry.signature, entry.hitboxes.offset, entry.hitboxes.size,
+                               entry.frames.offset, entry.frames.size, entry.glyphs.offset, entry.glyphs.size);
     }
 
     std::string result{"namespace cse::resource\n{\n" + loaders + "}\n\n"};
