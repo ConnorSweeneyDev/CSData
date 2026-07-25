@@ -26033,6 +26033,7 @@ namespace csp
 #include <fstream>
 #include <functional>
 #include <ios>
+#include <limits>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -26659,6 +26660,7 @@ namespace csd
     std::string space{};
     std::string pack{};
     std::vector<std::byte> blob{};
+    double duration{};
     unsigned int width{};
     unsigned int height{};
     unsigned int channels{};
@@ -26802,6 +26804,14 @@ namespace csd
         require(1);
         return static_cast<std::uint8_t>(bytes.at(cursor++));
       }
+      std::uint16_t word()
+      {
+        require(2);
+        const auto value{static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes.at(cursor)) |
+                                                    static_cast<std::uint16_t>(bytes.at(cursor + 1)) << 8u)};
+        cursor += 2;
+        return value;
+      }
       std::uint32_t dword()
       {
         require(4);
@@ -26810,6 +26820,15 @@ namespace csd
                          static_cast<std::uint32_t>(bytes.at(cursor + 2)) << 16u |
                          static_cast<std::uint32_t>(bytes.at(cursor + 3)) << 24u};
         cursor += 4;
+        return value;
+      }
+      std::uint64_t qword()
+      {
+        require(8);
+        std::uint64_t value{};
+        for (std::size_t index{}; index < 8; ++index)
+          value |= static_cast<std::uint64_t>(bytes.at(cursor + index)) << (index * 8u);
+        cursor += 8;
         return value;
       }
       std::string text(const std::size_t count)
@@ -26845,6 +26864,7 @@ namespace csd
     {
       std::size_t offset{};
       std::size_t size{};
+      std::uint64_t granule{};
       std::uint32_t serial{};
       std::size_t payload_offset{};
       std::size_t payload_size{};
@@ -26864,7 +26884,8 @@ namespace csd
         reader.skip(4);
         if (reader.byte() != 0u)
           throw std::runtime_error("Unsupported Ogg page version in audio file: " + file.string() + ".");
-        reader.skip(9);
+        reader.skip(1);
+        page.granule = reader.qword();
         page.serial = reader.dword();
         reader.skip(8);
         const auto segments{reader.byte()};
@@ -27114,35 +27135,57 @@ namespace csd
       return reader.matches("WAVE");
     }
 
-    inline std::optional<std::vector<std::byte>> audio_extract_rpp(const std::vector<std::byte> &bytes,
-                                                                   const std::filesystem::path &file)
+    inline double opus_duration(const std::vector<std::byte> &bytes, const std::vector<ogg_page> &pages,
+                                const std::filesystem::path &file)
     {
-      audio_reader reader{bytes, file};
-      if (reader.matches("OggS"))
+      audio_reader head{bytes, file, pages.front().payload_offset + 10u};
+      const auto pre_skip{head.word()};
+      for (auto page{pages.rbegin()}; page != pages.rend(); ++page)
       {
-        const auto pages{ogg_pages(bytes, file)};
-        if (pages.empty() || !audio_reader{bytes, file, pages.front().payload_offset}.matches("OpusHead"))
-          return std::nullopt;
-        return opus_extract_rpp(bytes, pages, file);
+        if (page->granule == std::numeric_limits<std::uint64_t>::max()) continue;
+        if (page->granule <= pre_skip) break;
+        return static_cast<double>(page->granule - pre_skip) / 48000.0;
       }
-      if (wave_audio(bytes, file)) return wav_extract_rpp(bytes, file);
-      return std::nullopt;
+      return 0.0;
     }
 
-    inline std::vector<std::byte> audio_replace_rpp(const std::vector<std::byte> &bytes,
-                                                    const std::optional<std::vector<std::byte>> &project,
-                                                    const std::filesystem::path &file)
+    inline double wav_duration(const std::vector<std::byte> &bytes, const std::filesystem::path &file)
+    {
+      audio_reader reader{bytes, file};
+      reader.skip(12u);
+      std::uint32_t byte_rate{};
+      std::uint32_t data_size{};
+      while (reader.cursor + 8u <= bytes.size())
+      {
+        const auto identifier{reader.text(4u)};
+        const auto size{reader.dword()};
+        const auto padded{
+          std::min<std::size_t>(static_cast<std::size_t>(size) + size % 2u, bytes.size() - reader.cursor)};
+        const auto next{reader.cursor + padded};
+        if (identifier == "fmt " && size >= 16u)
+        {
+          reader.skip(8u);
+          byte_rate = reader.dword();
+        }
+        else if (identifier == "data")
+          data_size = std::min<std::uint32_t>(size, static_cast<std::uint32_t>(bytes.size() - reader.cursor));
+        reader.cursor = next;
+      }
+      if (byte_rate == 0u) return 0.0;
+      return static_cast<double>(data_size) / static_cast<double>(byte_rate);
+    }
+
+    inline double audio_duration(const std::vector<std::byte> &bytes, const std::filesystem::path &file)
     {
       audio_reader reader{bytes, file};
       if (reader.matches("OggS"))
       {
         const auto pages{ogg_pages(bytes, file)};
-        if (pages.empty() || !audio_reader{bytes, file, pages.front().payload_offset}.matches("OpusHead"))
-          throw std::runtime_error("Ogg audio file is not an Opus stream: " + file.string() + ".");
-        return opus_replace_rpp(bytes, pages, project, file);
+        if (pages.empty() || !audio_reader{bytes, file, pages.front().payload_offset}.matches("OpusHead")) return 0.0;
+        return opus_duration(bytes, pages, file);
       }
-      if (wave_audio(bytes, file)) return wav_replace_rpp(bytes, project, file);
-      throw std::runtime_error("Audio file must be Opus or WAV to carry a Reaper project: " + file.string() + ".");
+      if (wave_audio(bytes, file)) return wav_duration(bytes, file);
+      return 0.0;
     }
 
     inline aseprite read_aseprite(const std::filesystem::path &file)
@@ -27842,7 +27885,18 @@ namespace csd
    */
   inline std::optional<std::vector<std::byte>> audio_extract_rpp(const std::vector<std::byte> &bytes,
                                                                  const std::filesystem::path &file)
-  { return detail::audio_extract_rpp(bytes, file); }
+  {
+    detail::audio_reader reader{bytes, file};
+    if (reader.matches("OggS"))
+    {
+      const auto pages{detail::ogg_pages(bytes, file)};
+      if (pages.empty() || !detail::audio_reader{bytes, file, pages.front().payload_offset}.matches("OpusHead"))
+        return std::nullopt;
+      return opus_extract_rpp(bytes, pages, file);
+    }
+    if (detail::wave_audio(bytes, file)) return detail::wav_extract_rpp(bytes, file);
+    return std::nullopt;
+  }
 
   /**
    * Replaces the Reaper project embedded in an opus/wav audio file, embedding the given project or stripping any
@@ -27851,14 +27905,26 @@ namespace csd
   inline std::vector<std::byte> audio_replace_rpp(const std::vector<std::byte> &bytes,
                                                   const std::optional<std::vector<std::byte>> &project,
                                                   const std::filesystem::path &file)
-  { return detail::audio_replace_rpp(bytes, project, file); }
+  {
+    detail::audio_reader reader{bytes, file};
+    if (reader.matches("OggS"))
+    {
+      const auto pages{detail::ogg_pages(bytes, file)};
+      if (pages.empty() || !detail::audio_reader{bytes, file, pages.front().payload_offset}.matches("OpusHead"))
+        throw std::runtime_error("Ogg audio file is not an Opus stream: " + file.string() + ".");
+      return opus_replace_rpp(bytes, pages, project, file);
+    }
+    if (detail::wave_audio(bytes, file)) return detail::wav_replace_rpp(bytes, project, file);
+    throw std::runtime_error("Audio file must be Opus or WAV to carry a Reaper project: " + file.string() + ".");
+  }
 
   /**
    * Loads a resource file into its parsed, packable form.
    *
    * Textures and fonts are parsed as aseprite files and validated against the engine's conventions: textures require a
    * 'pivot' group, fonts must not contain 'hitbox' or 'pivot' groups and need at least one slice. Sounds and musics are
-   * read as raw audio data with any embedded Reaper project stripped.
+   * read as raw audio data with any embedded Reaper project stripped, and their playing time is measured from the
+   * stripped data; audio whose playing time cannot be measured is rejected, since the engine times playback against it.
    *
    * This function's parameters behave as follows:
    * | `file`: The resource file to load.
@@ -27898,6 +27964,11 @@ namespace csd
     {
       current.blob = detail::read_bytes(file);
       if (audio_extract_rpp(current.blob, file)) current.blob = audio_replace_rpp(current.blob, std::nullopt, file);
+      current.duration = detail::audio_duration(current.blob, file);
+      if (current.duration <= 0.0)
+        throw std::runtime_error("Could not measure the playing time of audio file (it must be a well-formed Opus or "
+                                 "WAV file with a non-empty stream): " +
+                                 file.string() + ".");
     }
     else
       throw std::runtime_error("Unknown resource space '" + space + "' for file: " + file.string() + ".");
@@ -28099,7 +28170,8 @@ namespace csd
   /**
    * Generates the body of the accessor source: the pack loaders followed by the definition of every resource, bound to
    * its pack file regions. Layouts come from `layouts` and bindings describe where each blob landed in its written csp
-   * container.
+   * container. Sound and music definitions also carry their playing time so the engine can time playback without the
+   * audio device.
    */
   inline std::string accessor_source(const std::vector<const resource *> &resources, const std::string &space,
                                      const std::vector<layout> &layouts, const std::vector<binding> &bindings,
@@ -28208,8 +28280,8 @@ namespace csd
         if (item->space == resource_space)
         {
           const auto &place{place_of(*item)};
-          block += std::format("    const cse::{} {}{{cse::resource::region(\"{}\", {}, {})}};\n", resource_space,
-                               item->name, item->pack + ".csp", place.offset, place.size);
+          block += std::format("    const cse::{} {}{{cse::resource::region(\"{}\", {}, {}), {}}};\n", resource_space,
+                               item->name, item->pack + ".csp", place.offset, place.size, item->duration);
         }
       if (!block.empty()) result += std::format("  namespace {}\n  {{\n{}  }}\n", resource_space, block);
     }
