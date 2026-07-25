@@ -19,25 +19,25 @@ Parsing composites the cels into a single horizontal sprite sheet plus animation
 
 ### Sounds and Music (Opus/WAV renders of Reaper projects)
 Audio is authored in Reaper and rendered to `.opus` or `.wav`, and the rendered file is the single source of truth: the
-`.rpp` project rides inside the audio as metadata — an `RPP_SOURCE` comment tag in Opus files, an `rpp ` chunk in WAV
-files — where every decoder ignores it. CSData provides the machinery to extract the embedded project, embed an updated
+`.rpp` project rides inside the audio as metadata - an `RPP_SOURCE` comment tag in Opus files, an `rpp ` chunk in WAV
+files - where every decoder ignores it. CSData provides the machinery to extract the embedded project, embed an updated
 one (rewriting Ogg page checksums and sequence numbers as needed), or strip it for shipping.
 
 Each file's playing time is also measured at parse time, from its headers rather than by decoding: Opus streams report
 the granule position of their final Ogg page less the pre-skip declared in their `OpusHead` packet (Opus granules are
 always in 48kHz units, whatever the source rate), and WAV files divide the size of their `data` chunk by the byte rate
 in their `fmt ` chunk. It is measured after the embedded project is stripped, so the metadata never counts toward it.
-Audio whose playing time cannot be measured is rejected rather than packed as zero — CSEngine times gameplay against
+Audio whose playing time cannot be measured is rejected rather than packed as zero - CSEngine times gameplay against
 this value, so a silently wrong duration is worse than a failed build.
 
 ### Packed Layout and Accessors
 Parsed resources are serialized into binary blobs read back by CSEngine's runtime loaders. Each blob is a sequence of
-one of the shared record structs — every field is 8 bytes wide so the shapes are padding-free (pinned by static
+one of the shared record structs - every field is 8 bytes wide so the shapes are padding-free (pinned by static
 assertions), and readers reinterpret the mapped bytes as arrays of them directly:
-- `hitboxes`: `hitbox_record` — labelled rectangles; labels are string-table references in debug and (FNV-1a) hashes in
+- `hitboxes`: `hitbox_record` - labelled rectangles; labels are string-table references in debug and (FNV-1a) hashes in
   release.
-- `frames`: `frame_record` — UV bounds, duration, pivot and a span into the hitbox blob.
-- `glyphs`: `glyph_record` — code point, UV bounds and pixel size.
+- `frames`: `frame_record` - UV bounds, duration, pivot and a span into the hitbox blob.
+- `glyphs`: `glyph_record` - code point, UV bounds and pixel size.
 - `strings`: the hitbox label pool (debug builds only).
 
 Alongside the blobs, CSData generates the C++ accessor header and source that declare every resource (`cse::image`,
@@ -91,7 +91,7 @@ std::vector<std::byte> stripped{csd::audio_replace_rpp(bytes, std::nullopt, file
 
 ### Reading (Run-Time)
 Runtime loaders resolve a blob's bytes and reinterpret them as records; name types that look hitboxes up by label should
-hash through `hash_identifier` — it is constexpr, so compile-time name hashing works and release lookups can never drift
+hash through `hash_identifier` - it is constexpr, so compile-time name hashing works and release lookups can never drift
 from the packed data.
 ```cpp
 const auto *frames{reinterpret_cast<const csd::frame_record *>(base + frames_offset)};
