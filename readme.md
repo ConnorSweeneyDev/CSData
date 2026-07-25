@@ -23,6 +23,13 @@ Audio is authored in Reaper and rendered to `.opus` or `.wav`, and the rendered 
 files — where every decoder ignores it. CSData provides the machinery to extract the embedded project, embed an updated
 one (rewriting Ogg page checksums and sequence numbers as needed), or strip it for shipping.
 
+Each file's playing time is also measured at parse time, from its headers rather than by decoding: Opus streams report
+the granule position of their final Ogg page less the pre-skip declared in their `OpusHead` packet (Opus granules are
+always in 48kHz units, whatever the source rate), and WAV files divide the size of their `data` chunk by the byte rate
+in their `fmt ` chunk. It is measured after the embedded project is stripped, so the metadata never counts toward it.
+Audio whose playing time cannot be measured is rejected rather than packed as zero — CSEngine times gameplay against
+this value, so a silently wrong duration is worse than a failed build.
+
 ### Packed Layout and Accessors
 Parsed resources are serialized into binary blobs read back by CSEngine's runtime loaders. Each blob is a sequence of
 one of the shared record structs — every field is 8 bytes wide so the shapes are padding-free (pinned by static
@@ -35,15 +42,16 @@ assertions), and readers reinterpret the mapped bytes as arrays of them directly
 
 Alongside the blobs, CSData generates the C++ accessor header and source that declare every resource (`cse::image`,
 `cse::font`, `cse::sound`, `cse::music`, plus per-texture animation and hitbox structs) and bind them to regions of the
-pack files they were placed in.
+pack files they were placed in. Sound and music definitions carry their measured playing time as a second compile-time
+constant.
 
 ## Features
 - Single header, depending only on the C++20 standard library (a public-domain zlib decoder from stb_image is vendored
   internally for Aseprite cel decompression).
 - One definition of every resource format, shared by the build system and the engine's runtime readers: the packed
   record shapes and the label hash are single definitions consumed by both sides, so they cannot drift.
-- Strict validation with precise errors: malformed files, convention violations and duplicate names fail the build
-  instead of misbehaving at runtime.
+- Strict validation with precise errors: malformed files, convention violations, unmeasurable audio and duplicate names
+  fail the build instead of misbehaving at runtime.
 - Container-agnostic packing: CSData computes layouts and generates code against offsets the caller reports back, so it
   does not depend on any particular pack file format.
 
