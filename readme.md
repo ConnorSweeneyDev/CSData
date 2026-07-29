@@ -13,7 +13,9 @@ Resources are authored directly as `.aseprite` files (32-bit RGBA) following the
 - The flat `pivot` group holds exactly one layer with exactly one opaque pixel per frame, the frame's anchor point.
   Textures require a pivot; fonts must not have one (nor hitboxes).
 - For fonts, slices define the glyphs: the slice name is the character (one UTF-8 code point), the slice is the exact
-  glyph box, and the uniform slice height is the line height.
+  glyph box, and the uniform slice height is the line height. Ensure that you have defined a `U+FFFD` (`�`) glyph for
+  each font, so that the engine can substitute it for any missing characters. Without it, an undefined glyph that is
+  drawn will throw an exception.
 
 Parsing composites the cels into a single horizontal sprite sheet plus animation, hitbox and glyph metadata.
 
