@@ -39,7 +39,7 @@ int csb::build()
                               {"IndentCaseLabels", "true"},
                               {"NamespaceIndentation", "All"},
                               {"FixNamespaceComments", "false"}});
-  if (!csb::is_subproject) csb::format("22.1.8");
+  if (!csb::is_subproject) csb::format("23.1.1");
 
   auto build_include_path = csb::path("build/include/csd");
   if (!csb::exists(build_include_path)) csb::mkdir(build_include_path);

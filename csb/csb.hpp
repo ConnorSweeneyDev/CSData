@@ -27484,7 +27484,7 @@ namespace csd
         {
           const int width{static_cast<int>(cel.width)};
           const int height{static_cast<int>(cel.height)};
-          std::vector<unsigned char> mask(static_cast<std::size_t>(width) * height);
+          std::vector<unsigned char> mask(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
           for (int pixel{}; pixel < width * height; ++pixel)
             mask.at(static_cast<std::size_t>(pixel)) =
               pixels.at((static_cast<std::size_t>(pixel) * 4) + 3) != 0 ? 1 : 0;
@@ -27496,7 +27496,8 @@ namespace csd
             bool operator()(const int left, const int top) const
             {
               return left >= 0 && top >= 0 && left < width && top < height &&
-                     mask.at((static_cast<std::size_t>(top) * width) + left) != 0;
+                     mask.at((static_cast<std::size_t>(top) * static_cast<std::size_t>(width)) +
+                             static_cast<std::size_t>(left)) != 0;
             }
           };
           const solidity solid{mask, width, height};
@@ -27507,7 +27508,7 @@ namespace csd
             bool up;
           };
           const int lattice_height{height + 1};
-          std::vector<int> here(static_cast<std::size_t>(width + 1) * lattice_height, -1);
+          std::vector<int> here(static_cast<std::size_t>(width + 1) * static_cast<std::size_t>(lattice_height), -1);
           std::vector<corner> corners{};
           for (int top{}; top <= height; ++top)
             for (int left{}; left <= width; ++left)
@@ -27515,14 +27516,13 @@ namespace csd
               const bool top_left{solid(left - 1, top - 1)}, top_right{solid(left, top - 1)},
                 bottom_left{solid(left - 1, top)}, bottom_right{solid(left, top)};
               if (top_left + top_right + bottom_left + bottom_right != 3) continue;
-              here.at((static_cast<std::size_t>(left) * lattice_height) + top) = static_cast<int>(corners.size());
+              here.at((static_cast<std::size_t>(left) * static_cast<std::size_t>(lattice_height)) +
+                      static_cast<std::size_t>(top)) = static_cast<int>(corners.size());
               corners.push_back({left, top, !bottom_left || !bottom_right});
             }
 
           struct chord
-          {
-            int line, lo, hi, a, b;
-          };
+          { int line, lo, hi, a, b; };
           std::vector<chord> horizontal{}, vertical{};
           for (int top{}; top <= height; ++top)
             for (int left{}; left < width;)
@@ -27534,8 +27534,10 @@ namespace csd
               }
               const int low{left};
               while (left < width && solid(left, top - 1) && solid(left, top)) ++left;
-              const int first{here.at((static_cast<std::size_t>(low) * lattice_height) + top)};
-              const int second{here.at((static_cast<std::size_t>(left) * lattice_height) + top)};
+              const int first{here.at((static_cast<std::size_t>(low) * static_cast<std::size_t>(lattice_height)) +
+                                      static_cast<std::size_t>(top))};
+              const int second{here.at((static_cast<std::size_t>(left) * static_cast<std::size_t>(lattice_height)) +
+                                       static_cast<std::size_t>(top))};
               if (first >= 0 && second >= 0) horizontal.push_back({top, low, left, first, second});
             }
           for (int left{}; left <= width; ++left)
@@ -27548,8 +27550,10 @@ namespace csd
               }
               const int low{top};
               while (top < height && solid(left - 1, top) && solid(left, top)) ++top;
-              const int first{here.at((static_cast<std::size_t>(left) * lattice_height) + low)};
-              const int second{here.at((static_cast<std::size_t>(left) * lattice_height) + top)};
+              const int first{here.at((static_cast<std::size_t>(left) * static_cast<std::size_t>(lattice_height)) +
+                                      static_cast<std::size_t>(low))};
+              const int second{here.at((static_cast<std::size_t>(left) * static_cast<std::size_t>(lattice_height)) +
+                                       static_cast<std::size_t>(top))};
               if (first >= 0 && second >= 0) vertical.push_back({left, low, top, first, second});
             }
 
@@ -27573,54 +27577,61 @@ namespace csd
           std::vector<int> match_h(static_cast<std::size_t>(num_horizontal), -1),
             match_v(static_cast<std::size_t>(num_vertical), -1);
           std::vector<unsigned char> seen(static_cast<std::size_t>(num_vertical));
-          const std::function<bool(int)> augment{[&](int horizontal) -> bool
+          const std::function<bool(int)> augment{[&](int across) -> bool
                                                  {
-                                                   for (const int vertical :
-                                                        conflicts.at(static_cast<std::size_t>(horizontal)))
+                                                   for (const int up : conflicts.at(static_cast<std::size_t>(across)))
                                                    {
-                                                     if (seen.at(static_cast<std::size_t>(vertical))) continue;
-                                                     seen.at(static_cast<std::size_t>(vertical)) = 1;
-                                                     if (match_v.at(static_cast<std::size_t>(vertical)) < 0 ||
-                                                         augment(match_v.at(static_cast<std::size_t>(vertical))))
+                                                     if (seen.at(static_cast<std::size_t>(up))) continue;
+                                                     seen.at(static_cast<std::size_t>(up)) = 1;
+                                                     if (match_v.at(static_cast<std::size_t>(up)) < 0 ||
+                                                         augment(match_v.at(static_cast<std::size_t>(up))))
                                                      {
-                                                       match_v.at(static_cast<std::size_t>(vertical)) = horizontal;
-                                                       match_h.at(static_cast<std::size_t>(horizontal)) = vertical;
+                                                       match_v.at(static_cast<std::size_t>(up)) = across;
+                                                       match_h.at(static_cast<std::size_t>(across)) = up;
                                                        return true;
                                                      }
                                                    }
                                                    return false;
                                                  }};
-          for (int horizontal{}; horizontal < num_horizontal; ++horizontal)
+          for (int across{}; across < num_horizontal; ++across)
           {
             std::ranges::fill(seen, static_cast<unsigned char>(0));
-            augment(horizontal);
+            augment(across);
           }
           std::vector<unsigned char> visited_h(static_cast<std::size_t>(num_horizontal)),
             visited_v(static_cast<std::size_t>(num_vertical));
-          const std::function<void(int)> mark{[&](int horizontal)
+          const std::function<void(int)> mark{[&](int across)
                                               {
-                                                visited_h.at(static_cast<std::size_t>(horizontal)) = 1;
-                                                for (const int vertical :
-                                                     conflicts.at(static_cast<std::size_t>(horizontal)))
+                                                visited_h.at(static_cast<std::size_t>(across)) = 1;
+                                                for (const int up : conflicts.at(static_cast<std::size_t>(across)))
                                                 {
-                                                  if (visited_v.at(static_cast<std::size_t>(vertical))) continue;
-                                                  visited_v.at(static_cast<std::size_t>(vertical)) = 1;
-                                                  const int next{match_v.at(static_cast<std::size_t>(vertical))};
+                                                  if (visited_v.at(static_cast<std::size_t>(up))) continue;
+                                                  visited_v.at(static_cast<std::size_t>(up)) = 1;
+                                                  const int next{match_v.at(static_cast<std::size_t>(up))};
                                                   if (next >= 0 && !visited_h.at(static_cast<std::size_t>(next)))
                                                     mark(next);
                                                 }
                                               }};
-          for (int horizontal{}; horizontal < num_horizontal; ++horizontal)
-            if (match_h.at(static_cast<std::size_t>(horizontal)) < 0 &&
-                !visited_h.at(static_cast<std::size_t>(horizontal)))
-              mark(horizontal);
+          for (int across{}; across < num_horizontal; ++across)
+            if (match_h.at(static_cast<std::size_t>(across)) < 0 && !visited_h.at(static_cast<std::size_t>(across)))
+              mark(across);
 
-          std::vector<unsigned char> vertical_wall(static_cast<std::size_t>(width + 1) * height, 0);
-          std::vector<unsigned char> horizontal_wall(static_cast<std::size_t>(width) * (height + 1), 0);
+          std::vector<unsigned char> vertical_wall(
+            static_cast<std::size_t>(width + 1) * static_cast<std::size_t>(height), 0);
+          std::vector<unsigned char> horizontal_wall(
+            static_cast<std::size_t>(width) * static_cast<std::size_t>(height + 1), 0);
           const auto vwall{[&](int left, int top) -> unsigned char &
-                           { return vertical_wall.at((static_cast<std::size_t>(left) * height) + top); }};
+                           {
+                             return vertical_wall.at(
+                               (static_cast<std::size_t>(left) * static_cast<std::size_t>(height)) +
+                               static_cast<std::size_t>(top));
+                           }};
           const auto hwall{[&](int left, int top) -> unsigned char &
-                           { return horizontal_wall.at((static_cast<std::size_t>(left) * (height + 1)) + top); }};
+                           {
+                             return horizontal_wall.at(
+                               (static_cast<std::size_t>(left) * static_cast<std::size_t>(height + 1)) +
+                               static_cast<std::size_t>(top));
+                           }};
           std::vector<unsigned char> resolved(corners.size(), 0);
           for (int i{}; i < num_horizontal; ++i)
             if (visited_h.at(static_cast<std::size_t>(i)))
@@ -27656,9 +27667,12 @@ namespace csd
               }
           }
 
-          std::vector<unsigned char> covered(static_cast<std::size_t>(width) * height, 0);
+          std::vector<unsigned char> covered(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
           const auto cover{[&](int left, int top) -> unsigned char &
-                           { return covered.at((static_cast<std::size_t>(top) * width) + left); }};
+                           {
+                             return covered.at((static_cast<std::size_t>(top) * static_cast<std::size_t>(width)) +
+                                               static_cast<std::size_t>(left));
+                           }};
           std::vector<std::array<double, 4>> rectangles{};
           for (int row{}; row < height; ++row)
             for (int column{}; column < width; ++column)
@@ -27712,7 +27726,8 @@ namespace csd
               const double source_alpha{pixels.at(source + 3) / 255.0 * layer_alpha};
               if (source_alpha <= 0.0) continue;
               const std::size_t destination{
-                ((static_cast<std::size_t>(top) * width) + ((static_cast<std::size_t>(frame) * frame_width) + left)) *
+                ((static_cast<std::size_t>(top) * width) +
+                 ((static_cast<std::size_t>(frame) * frame_width) + static_cast<std::size_t>(left))) *
                 4};
               const double destination_alpha{sheet.at(destination + 3) / 255.0};
               const double alpha{source_alpha + (destination_alpha * (1.0 - source_alpha))};
@@ -28304,7 +28319,6 @@ namespace csd
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -28322,7 +28336,6 @@ namespace csd
 #include <iostream>
 #include <iterator>
 #include <mutex>
-#include <optional>
 #include <regex>
 #include <span>
 #include <sstream>
