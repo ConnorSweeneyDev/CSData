@@ -27521,8 +27521,7 @@ namespace csd
               corners.push_back({left, top, !bottom_left || !bottom_right});
             }
 
-          struct chord
-          { int line, lo, hi, a, b; };
+          struct chord { int line, lo, hi, a, b; };
           std::vector<chord> horizontal{}, vertical{};
           for (int top{}; top <= height; ++top)
             for (int left{}; left < width;)

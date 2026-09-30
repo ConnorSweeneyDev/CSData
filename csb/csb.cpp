@@ -32,6 +32,7 @@ int csb::build()
                               {"AllowShortLoopsOnASingleLine", "true"},
                               {"AllowShortFunctionsOnASingleLine", "true"},
                               {"AllowShortLambdasOnASingleLine", "true"},
+                              {"AllowShortRecordOnASingleLine", "Always"},
                               {"AllowShortEnumsOnASingleLine", "true"},
                               {"AllowShortNamespacesOnASingleLine", "true"},
                               {"BreakTemplateDeclarations", "No"},
